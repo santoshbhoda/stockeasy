@@ -20,10 +20,13 @@ export default function SettingsPage() {
   const isOnline = useOnlineStatus();
 
   const [isSyncing, setIsSyncing] = useState(false);
+  const [syncErrorDetails, setSyncErrorDetails] = useState(null);
   const [newCatName, setNewCatName] = useState('');
   const [newCatIcon, setNewCatIcon] = useState('📱');
   const [isAddingCat, setIsAddingCat] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(null);
+  const [isTestingConn, setIsTestingConn] = useState(false);
+  const [connStatus, setConnStatus] = useState(null);
 
   // Reactive Dexie sync metadata & queue count
   const syncMeta = useLiveQuery(() => db.syncMeta.get('last_sync_time'), []);
@@ -48,18 +51,87 @@ export default function SettingsPage() {
     }
 
     setIsSyncing(true);
+    setSyncErrorDetails(null);
     try {
       const result = await fullSync();
       if (result.success) {
         toast.success(t('sync.syncSuccess', 'Sync completed successfully!'));
+        setSyncErrorDetails(null);
       } else {
-        toast.error(result.error || t('sync.syncError', 'Sync error occurred'));
+        const errorMsg = result.error || 'Sync error occurred';
+        setSyncErrorDetails(errorMsg);
+        toast.error(errorMsg);
       }
     } catch (err) {
       console.error('Manual sync failed:', err);
-      toast.error(err.message || t('sync.syncError', 'Sync failed'));
+      const msg = err.message || 'Sync failed';
+      setSyncErrorDetails(msg);
+      toast.error(msg);
     } finally {
       setIsSyncing(false);
+    }
+  };
+
+  // Test Direct Supabase Connection
+  const handleTestConnection = async () => {
+    setIsTestingConn(true);
+    setConnStatus(null);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const { count, error } = await supabase.from('products').select('*', { count: 'exact', head: true });
+      
+      if (error) {
+        setConnStatus({
+          success: false,
+          message: `Supabase Error: ${error.message} (${error.code || 'RLS/Network'})`,
+          userEmail: session?.user?.email || 'Not logged in to Supabase'
+        });
+      } else {
+        setConnStatus({
+          success: true,
+          message: `Connected successfully! Cloud Products count: ${count ?? 0}`,
+          userEmail: session?.user?.email || 'Authenticated'
+        });
+        toast.success('Supabase connection verified!');
+      }
+    } catch (err) {
+      setConnStatus({
+        success: false,
+        message: `Connection failed: ${err.message}`,
+        userEmail: 'Unknown'
+      });
+    } finally {
+      setIsTestingConn(false);
+    }
+  };
+
+  // Clear Stuck Queue
+  const handleClearStuckQueue = async () => {
+    if (window.confirm('Clear pending queue items? Use this if corrupted items from an older app version are stuck in queue.')) {
+      await db.syncQueue.clear();
+      setSyncErrorDetails(null);
+      toast.success('Pending queue cleared');
+    }
+  };
+
+  // Force App Update & Reload
+  const handleForceUpdateApp = async () => {
+    try {
+      if ('serviceWorker' in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        for (const reg of registrations) {
+          await reg.unregister();
+        }
+      }
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        for (const key of keys) {
+          await caches.delete(key);
+        }
+      }
+      window.location.reload(true);
+    } catch {
+      window.location.reload();
     }
   };
 
@@ -260,6 +332,21 @@ export default function SettingsPage() {
           </div>
         </div>
 
+        {syncErrorDetails && (
+          <div className="alert alert-error text-xs rounded-2xl p-3 shadow-inner">
+            <span className="font-mono break-all">⚠️ {syncErrorDetails}</span>
+          </div>
+        )}
+
+        {connStatus && (
+          <div className={`alert ${connStatus.success ? 'alert-success' : 'alert-warning'} text-xs rounded-2xl p-3`}>
+            <div>
+              <div className="font-bold">{connStatus.message}</div>
+              <div className="text-[11px] opacity-80 mt-0.5">User: {connStatus.userEmail}</div>
+            </div>
+          </div>
+        )}
+
         <button
           type="button"
           onClick={handleManualSync}
@@ -278,6 +365,36 @@ export default function SettingsPage() {
             </>
           )}
         </button>
+
+        {/* Troubleshooting utilities */}
+        <div className="pt-2 border-t border-base-200 grid grid-cols-2 gap-2 text-xs">
+          <button
+            type="button"
+            onClick={handleTestConnection}
+            disabled={isTestingConn}
+            className="btn btn-outline btn-xs rounded-xl"
+          >
+            {isTestingConn ? 'Testing...' : '🔍 Test Connection'}
+          </button>
+
+          {pendingCount > 0 && (
+            <button
+              type="button"
+              onClick={handleClearStuckQueue}
+              className="btn btn-outline btn-warning btn-xs rounded-xl"
+            >
+              🧹 Clear Queue ({pendingCount})
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={handleForceUpdateApp}
+            className="btn btn-ghost btn-xs rounded-xl col-span-2 text-base-content/60"
+          >
+            🔄 Force Update & Reload App
+          </button>
+        </div>
       </div>
 
       {/* SECTION 4: Admin Controls (Only visible for Owner) */}

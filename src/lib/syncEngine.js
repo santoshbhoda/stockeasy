@@ -47,11 +47,14 @@ export function sanitizeRecordForRemote(table, raw) {
   const clean = { ...raw }
 
   if (table === 'products') {
+    const barcodeVal = clean.barcode ? String(clean.barcode).trim() : ''
+    if (!barcodeVal && !clean.name) return null
+
     return {
-      id: clean.id || crypto.randomUUID(),
-      barcode: String(clean.barcode || '').trim(),
-      name: String(clean.name || '').trim(),
-      brand: String(clean.brand || '').trim(),
+      id: isValidUuid(clean.id) ? clean.id : crypto.randomUUID(),
+      barcode: barcodeVal || `GEN-${Date.now()}`,
+      name: String(clean.name || 'Unnamed Product').trim(),
+      brand: String(clean.brand || 'Generic').trim(),
       model: clean.model ? String(clean.model).trim() : null,
       category_id: isValidUuid(clean.category_id) ? clean.category_id : null,
       mrp: clean.mrp !== undefined && clean.mrp !== null ? Number(clean.mrp) : (clean.price !== undefined ? Number(clean.price) : null),
@@ -64,8 +67,13 @@ export function sanitizeRecordForRemote(table, raw) {
   }
 
   if (table === 'inventory') {
+    if (!isValidUuid(clean.product_id) || !isValidUuid(clean.branch_id)) {
+      console.warn('Inventory record skipped: Missing valid product_id or branch_id UUID:', clean)
+      return null
+    }
+
     return {
-      id: clean.id || crypto.randomUUID(),
+      id: isValidUuid(clean.id) ? clean.id : crypto.randomUUID(),
       product_id: clean.product_id,
       branch_id: clean.branch_id,
       quantity: Math.max(0, Number(clean.quantity) || 0),
@@ -74,8 +82,13 @@ export function sanitizeRecordForRemote(table, raw) {
   }
 
   if (table === 'stock_movements') {
+    if (!isValidUuid(clean.product_id) || !isValidUuid(clean.branch_id)) {
+      console.warn('Stock movement skipped: Missing valid product_id or branch_id UUID:', clean)
+      return null
+    }
+
     return {
-      id: clean.id || crypto.randomUUID(),
+      id: isValidUuid(clean.id) ? clean.id : crypto.randomUUID(),
       product_id: clean.product_id,
       branch_id: clean.branch_id,
       user_id: isValidUuid(clean.user_id) ? clean.user_id : null,
@@ -88,18 +101,20 @@ export function sanitizeRecordForRemote(table, raw) {
   }
 
   if (table === 'categories') {
+    if (!clean.name) return null
     return {
-      id: clean.id || crypto.randomUUID(),
-      name: String(clean.name || '').trim(),
+      id: isValidUuid(clean.id) ? clean.id : crypto.randomUUID(),
+      name: String(clean.name).trim(),
       icon: clean.icon || null,
       created_at: clean.created_at || new Date().toISOString()
     }
   }
 
   if (table === 'branches') {
+    if (!clean.name) return null
     return {
-      id: clean.id || crypto.randomUUID(),
-      name: String(clean.name || '').trim(),
+      id: isValidUuid(clean.id) ? clean.id : crypto.randomUUID(),
+      name: String(clean.name).trim(),
       address: clean.address || null,
       phone: clean.phone || null,
       created_at: clean.created_at || new Date().toISOString(),
@@ -112,28 +127,32 @@ export function sanitizeRecordForRemote(table, raw) {
 
 /**
  * Process all pending items in syncQueue (Push to Supabase)
- * @returns {Promise<{ synced: number, failed: number, remaining: number }>}
+ * @returns {Promise<{ synced: number, failed: number, remaining: number, error?: string }>}
  */
 export async function processSyncQueue() {
   if (!isOnline()) {
     const remaining = await db.syncQueue.count()
-    return { synced: 0, failed: 0, remaining }
+    return { synced: 0, failed: 0, remaining, error: 'Offline' }
   }
 
   // Ensure user has active session in Supabase before pushing
+  let currentUser = null
   try {
     const { data: { session } } = await supabase.auth.getSession()
-    if (!session?.user) {
-      console.warn('Sync push skipped: No active Supabase auth session.')
-      const remaining = await db.syncQueue.count()
-      return { synced: 0, failed: 0, remaining }
-    }
+    currentUser = session?.user || null
   } catch (authErr) {
     console.warn('Auth check error during sync:', authErr)
   }
 
+  if (!currentUser) {
+    console.warn('Sync push skipped: No active login session found.')
+    const remaining = await db.syncQueue.count()
+    return { synced: 0, failed: 0, remaining, error: 'Please log in to sync changes to cloud' }
+  }
+
   let synced = 0
   let failed = 0
+  let lastErrorMsg = null
 
   try {
     const items = await db.syncQueue.orderBy('id').toArray()
@@ -145,65 +164,76 @@ export async function processSyncQueue() {
       try {
         const sanitizedData = item.data ? sanitizeRecordForRemote(remoteTable, item.data) : null
 
+        // If the item data was invalid and could not be sanitized, remove from queue
+        if (!sanitizedData && item.data && operation !== 'DELETE') {
+          console.warn(`Pruning corrupted queue item #${item.id} from table ${remoteTable}:`, item.data)
+          await db.syncQueue.delete(item.id)
+          continue
+        }
+
         let result
-        if (operation === 'INSERT' || operation === 'UPSERT') {
-          result = await supabase.from(remoteTable).upsert(sanitizedData)
-        } else if (operation === 'UPDATE') {
-          if (sanitizedData) {
-            result = await supabase.from(remoteTable).upsert(sanitizedData)
-          } else {
-            result = await supabase.from(remoteTable).update(sanitizedData).eq('id', item.record_id)
-          }
-        } else if (operation === 'DELETE') {
+        if (operation === 'DELETE') {
           result = await supabase.from(remoteTable).delete().eq('id', item.record_id)
+        } else if (remoteTable === 'products') {
+          result = await supabase.from('products').upsert(sanitizedData, { onConflict: 'barcode' })
+        } else if (remoteTable === 'inventory') {
+          result = await supabase.from('inventory').upsert(sanitizedData, { onConflict: 'product_id,branch_id' })
+        } else if (remoteTable === 'categories') {
+          result = await supabase.from('categories').upsert(sanitizedData, { onConflict: 'name' })
+        } else if (remoteTable === 'branches') {
+          result = await supabase.from('branches').upsert(sanitizedData, { onConflict: 'name' })
+        } else if (remoteTable === 'stock_movements') {
+          result = await supabase.from('stock_movements').insert(sanitizedData)
         } else {
           result = await supabase.from(remoteTable).upsert(sanitizedData)
         }
 
         if (result?.error) {
-          console.error(`Sync error for table ${remoteTable} (${operation}):`, result.error.message, result.error)
+          lastErrorMsg = result.error.message || result.error.details || JSON.stringify(result.error)
+          console.error(`Sync error for table ${remoteTable} (${operation}):`, lastErrorMsg, result.error)
           failed++
 
-          // If the error is a permanent client/format error (400, 422, invalid syntax, FK violation),
-          // discard the un-syncable corrupt queue item so it doesn't block the rest of the queue
+          // Discard permanent format errors so queue is not permanently blocked
           const isPermanentClientError = 
-            result.error.code === '22P02' || // invalid text representation for uuid
+            result.error.code === '22P02' || // invalid uuid
             result.error.code === '23503' || // foreign key violation
             result.error.code === 'PGRST100' || // column not found
-            result.error.message?.includes('invalid input syntax') ||
-            result.error.message?.includes('violates foreign key');
+            lastErrorMsg.includes('invalid input syntax') ||
+            lastErrorMsg.includes('violates foreign key');
 
           if (isPermanentClientError) {
-            console.warn(`Removing permanently invalid queue item #${item.id} to avoid blocking sync.`);
-            await db.syncQueue.delete(item.id);
+            console.warn(`Discarding unresolvable queue item #${item.id} (${remoteTable}):`, lastErrorMsg)
+            await db.syncQueue.delete(item.id)
           } else {
-            // Stop to preserve FIFO on network or temporary errors
-            break;
+            // Stop loop on network / permission errors to preserve FIFO
+            break
           }
-          continue;
+          continue
         }
 
         // Successfully pushed to Supabase -> remove from local queue
         await db.syncQueue.delete(item.id)
         synced++
       } catch (itemErr) {
+        lastErrorMsg = itemErr.message || 'Unknown item sync error'
         console.error(`Sync exception for table ${remoteTable}:`, itemErr)
         failed++
         break
       }
     }
   } catch (err) {
+    lastErrorMsg = err.message || 'Queue iteration error'
     console.error('Error in processSyncQueue:', err)
   }
 
   const remaining = await db.syncQueue.count()
-  return { synced, failed, remaining }
+  return { synced, failed, remaining, error: lastErrorMsg }
 }
 
 /**
  * Pull latest data from Supabase and upsert locally with Last Write Wins
  * @param {string|null} [lastSyncTime] 
- * @returns {Promise<{ success: boolean, timestamp: string, tablesPulled: object, error?: string }>}
+ * @returns {Promise<{ success: boolean, timestamp: string|null, tablesPulled: object, error?: string }>}
  */
 export async function pullFromCloud(lastSyncTime = null) {
   if (!isOnline()) {
@@ -216,16 +246,15 @@ export async function pullFromCloud(lastSyncTime = null) {
     effectiveSyncTime = meta?.value || null
   }
 
-  // Tables with updated_at column
   const tablesWithUpdatedAt = new Set(['products', 'branches', 'inventory'])
   const tablesToPull = ['categories', 'branches', 'products', 'inventory']
   const tablesPulled = {}
+  let pullError = null
 
   try {
     for (const table of tablesToPull) {
       let query = supabase.from(table).select('*')
 
-      // Only filter by updated_at if the table actually has updated_at and Dexie already has records
       const localTableKey = TABLE_MAP_REMOTE_TO_LOCAL[table] || table
       const localTable = db[localTableKey]
       const localCount = localTable ? await localTable.count() : 0
@@ -236,7 +265,7 @@ export async function pullFromCloud(lastSyncTime = null) {
 
       let { data, error } = await query
 
-      // Fallback if query failed
+      // Fallback query if error occurred with gt
       if (error && effectiveSyncTime) {
         const fallback = await supabase.from(table).select('*')
         if (!fallback.error) {
@@ -246,6 +275,7 @@ export async function pullFromCloud(lastSyncTime = null) {
       }
 
       if (error) {
+        pullError = error.message
         console.warn(`Could not pull table ${table}:`, error.message)
         continue
       }
@@ -267,7 +297,6 @@ export async function pullFromCloud(lastSyncTime = null) {
             } else {
               const remoteTime = remote.updated_at ? new Date(remote.updated_at).getTime() : (remote.created_at ? new Date(remote.created_at).getTime() : 0)
               const localTime = local.updated_at ? new Date(local.updated_at).getTime() : (local.created_at ? new Date(local.created_at).getTime() : 0)
-              // Last Write Wins: remote wins if newer or equal
               if (remoteTime >= localTime) {
                 recordsToPut.push(remote)
               }
@@ -298,7 +327,7 @@ export async function pullFromCloud(lastSyncTime = null) {
       success: false,
       timestamp: null,
       tablesPulled,
-      error: err.message
+      error: err.message || pullError
     }
   }
 }
@@ -314,11 +343,14 @@ export async function fullSync() {
     const pullResult = await pullFromCloud()
 
     const isSuccess = pushResult.failed === 0 && (pullResult.success || !isOnline())
+    const combinedError = pushResult.error || pullResult.error || (pushResult.failed > 0 ? `${pushResult.failed} item(s) failed to sync` : null)
+
     return {
       success: isSuccess,
       push: pushResult,
       pull: pullResult,
-      timestamp
+      timestamp,
+      error: isSuccess ? null : combinedError
     }
   } catch (err) {
     console.error('Error in fullSync:', err)
@@ -327,7 +359,7 @@ export async function fullSync() {
       push: { synced: 0, failed: 0, remaining: await db.syncQueue.count() },
       pull: { success: false, error: err.message },
       timestamp,
-      error: err.message
+      error: err.message || 'Sync failed unexpectedly'
     }
   }
 }
