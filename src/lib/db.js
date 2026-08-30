@@ -8,9 +8,16 @@ db.version(1).stores({
   branches: 'id, name',
   inventory: 'id, [product_id+branch_id], product_id, branch_id, updated_at',
   stockMovements: 'id, product_id, branch_id, user_id, type, created_at',
+  profiles: 'id, role, branch_id',
   syncQueue: '++id, table, operation, record_id, created_at',
   syncMeta: 'key'
 })
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function isValidUuid(val) {
+  return typeof val === 'string' && UUID_REGEX.test(val)
+}
 
 /**
  * Add an entry to the sync queue with timestamp
@@ -79,13 +86,22 @@ export async function addStockIn(productId, branchId, quantity, userId, reason =
     throw new Error('Quantity must be a positive number')
   }
 
+  // Resolve valid branchId
+  let targetBranchId = branchId
+  if (!isValidUuid(targetBranchId)) {
+    const firstBranch = await db.branches.toCollection().first()
+    if (firstBranch?.id && isValidUuid(firstBranch.id)) {
+      targetBranchId = firstBranch.id
+    }
+  }
+
   const now = new Date().toISOString()
   const movementId = crypto.randomUUID()
 
   return await db.transaction('rw', [db.inventory, db.stockMovements, db.syncQueue], async () => {
     const existing = await db.inventory
       .where('[product_id+branch_id]')
-      .equals([productId, branchId])
+      .equals([productId, targetBranchId])
       .first()
 
     let updatedInventory
@@ -103,10 +119,8 @@ export async function addStockIn(productId, branchId, quantity, userId, reason =
       updatedInventory = {
         id: crypto.randomUUID(),
         product_id: productId,
-        branch_id: branchId,
+        branch_id: targetBranchId,
         quantity: qty,
-        min_stock_level: 5,
-        created_at: now,
         updated_at: now
       }
       await db.inventory.add(updatedInventory)
@@ -115,8 +129,8 @@ export async function addStockIn(productId, branchId, quantity, userId, reason =
     const movement = {
       id: movementId,
       product_id: productId,
-      branch_id: branchId,
-      user_id: userId,
+      branch_id: targetBranchId,
+      user_id: isValidUuid(userId) ? userId : null,
       type: 'IN',
       quantity: qty,
       reason: reason || 'purchase',
@@ -161,13 +175,22 @@ export async function addStockOut(productId, branchId, quantity, userId, reason 
     throw new Error('Quantity must be a positive number')
   }
 
+  // Resolve valid branchId
+  let targetBranchId = branchId
+  if (!isValidUuid(targetBranchId)) {
+    const firstBranch = await db.branches.toCollection().first()
+    if (firstBranch?.id && isValidUuid(firstBranch.id)) {
+      targetBranchId = firstBranch.id
+    }
+  }
+
   const now = new Date().toISOString()
   const movementId = crypto.randomUUID()
 
   return await db.transaction('rw', [db.inventory, db.stockMovements, db.syncQueue], async () => {
     const existing = await db.inventory
       .where('[product_id+branch_id]')
-      .equals([productId, branchId])
+      .equals([productId, targetBranchId])
       .first()
 
     const currentQty = Number(existing?.quantity) || 0
@@ -185,8 +208,8 @@ export async function addStockOut(productId, branchId, quantity, userId, reason 
     const movement = {
       id: movementId,
       product_id: productId,
-      branch_id: branchId,
-      user_id: userId,
+      branch_id: targetBranchId,
+      user_id: isValidUuid(userId) ? userId : null,
       type: 'OUT',
       quantity: qty,
       reason: reason || 'sale',
@@ -230,15 +253,14 @@ export async function registerProduct(productData) {
     barcode: productData.barcode ? String(productData.barcode).trim() : '',
     name: productData.name ? String(productData.name).trim() : '',
     brand: productData.brand ? String(productData.brand).trim() : '',
-    category_id: productData.category_id || null,
+    model: productData.model ? String(productData.model).trim() : '',
+    category_id: isValidUuid(productData.category_id) ? productData.category_id : null,
+    mrp: productData.mrp !== undefined && productData.mrp !== null ? Number(productData.mrp) : (productData.price !== undefined ? Number(productData.price) : 0),
+    purchase_price: productData.purchase_price !== undefined && productData.purchase_price !== null ? Number(productData.purchase_price) : (productData.cost_price !== undefined ? Number(productData.cost_price) : 0),
+    reorder_level: productData.reorder_level !== undefined && productData.reorder_level !== null ? Number(productData.reorder_level) : (productData.min_stock_level !== undefined ? Number(productData.min_stock_level) : 5),
     is_active: productData.is_active !== undefined ? Boolean(productData.is_active) : true,
-    price: productData.price !== undefined ? Number(productData.price) : 0,
-    cost_price: productData.cost_price !== undefined ? Number(productData.cost_price) : 0,
-    unit: productData.unit || 'pcs',
     created_at: productData.created_at || now,
-    updated_at: now,
-    ...productData,
-    id: productId
+    updated_at: now
   }
 
   return await db.transaction('rw', [db.products, db.inventory, db.syncQueue], async () => {
@@ -254,14 +276,19 @@ export async function registerProduct(productData) {
 
     // Optional initial branch inventory
     if (productData.branch_id && productData.initial_quantity !== undefined) {
+      let targetBranchId = productData.branch_id
+      if (!isValidUuid(targetBranchId)) {
+        const firstBranch = await db.branches.toCollection().first()
+        if (firstBranch?.id && isValidUuid(firstBranch.id)) {
+          targetBranchId = firstBranch.id
+        }
+      }
       const initialQty = Number(productData.initial_quantity) || 0
       const invRecord = {
         id: crypto.randomUUID(),
         product_id: productId,
-        branch_id: productData.branch_id,
+        branch_id: targetBranchId,
         quantity: initialQty,
-        min_stock_level: productData.min_stock_level !== undefined ? Number(productData.min_stock_level) : 5,
-        created_at: now,
         updated_at: now
       }
       await db.inventory.put(invRecord)
@@ -316,7 +343,7 @@ export async function getLowStockItems(branchId = null, threshold = null) {
         inventory_id: inv.id,
         branch_id: inv.branch_id,
         quantity: Number(inv.quantity) || 0,
-        min_stock_level: inv.min_stock_level ?? 5,
+        reorder_level: product.reorder_level ?? 5,
         inventory: inv
       }
     })

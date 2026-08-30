@@ -24,9 +24,29 @@ export default function StockOutPage() {
     // Auth context fallback
   }
   const { user, profile } = auth;
-  const branchId = profile?.branch_id || 'branch-1';
-  const userId = user?.id || 'local-user';
-  const branchName = profile?.branch_name || 'Main Branch';
+  const [resolvedBranchId, setResolvedBranchId] = useState(profile?.branch_id || null);
+  const [resolvedBranchName, setResolvedBranchName] = useState(profile?.branch_name || 'Main Store');
+  const userId = user?.id || null;
+
+  useEffect(() => {
+    async function resolveBranch() {
+      if (profile?.branch_id) {
+        setResolvedBranchId(profile.branch_id);
+        const b = await db.branches.get(profile.branch_id);
+        if (b?.name) setResolvedBranchName(b.name);
+      } else {
+        const firstBranch = await db.branches.toCollection().first();
+        if (firstBranch?.id) {
+          setResolvedBranchId(firstBranch.id);
+          if (firstBranch.name) setResolvedBranchName(firstBranch.name);
+        }
+      }
+    }
+    resolveBranch();
+  }, [profile?.branch_id]);
+
+  const branchId = resolvedBranchId;
+  const branchName = resolvedBranchName;
 
   // Workflow states: 'scanning' | 'found' | 'not_found' | 'done'
   const [status, setStatus] = useState('scanning');
@@ -43,6 +63,7 @@ export default function StockOutPage() {
 
   // Fetch current stock for product at current branch
   const fetchCurrentStock = useCallback(async (productId) => {
+    if (!productId || !branchId) return 0;
     try {
       const inv = await db.inventory
         .where('[product_id+branch_id]')

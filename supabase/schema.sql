@@ -336,18 +336,18 @@ create policy "Products viewable by authenticated users"
   to authenticated
   using (true);
 
--- Only owners can insert products
-create policy "Products insertable by owner"
+-- Authenticated users (owner and staff) can register products
+create policy "Products insertable by authenticated users"
   on public.products for insert
   to authenticated
-  with check (public.is_owner());
+  with check (true);
 
--- Only owners can update products
-create policy "Products updatable by owner"
+-- Authenticated users can update products
+create policy "Products updatable by authenticated users"
   on public.products for update
   to authenticated
-  using (public.is_owner())
-  with check (public.is_owner());
+  using (true)
+  with check (true);
 
 -- Only owners can delete products
 create policy "Products deletable by owner"
@@ -358,24 +358,24 @@ create policy "Products deletable by owner"
 -- ----------------------------------------------------------------------------
 -- Inventory Policies
 -- ----------------------------------------------------------------------------
--- Owner can view all; Staff can only view inventory of their assigned branch
-create policy "Inventory viewable by owner or assigned branch staff"
+-- All authenticated users can view inventory
+create policy "Inventory viewable by authenticated users"
   on public.inventory for select
   to authenticated
-  using (public.is_owner() or branch_id = public.get_user_branch_id());
+  using (true);
 
--- Owner can insert all; Staff can insert only for their assigned branch
-create policy "Inventory insertable by owner or assigned branch staff"
+-- Authenticated users can insert inventory
+create policy "Inventory insertable by authenticated users"
   on public.inventory for insert
   to authenticated
-  with check (public.is_owner() or branch_id = public.get_user_branch_id());
+  with check (true);
 
--- Owner can update all; Staff can update only for their assigned branch
-create policy "Inventory updatable by owner or assigned branch staff"
+-- Authenticated users can update inventory
+create policy "Inventory updatable by authenticated users"
   on public.inventory for update
   to authenticated
-  using (public.is_owner() or branch_id = public.get_user_branch_id())
-  with check (public.is_owner() or branch_id = public.get_user_branch_id());
+  using (true)
+  with check (true);
 
 -- Only owners can delete inventory records
 create policy "Inventory deletable by owner"
@@ -386,24 +386,24 @@ create policy "Inventory deletable by owner"
 -- ----------------------------------------------------------------------------
 -- Stock Movements Policies
 -- ----------------------------------------------------------------------------
--- Owner can view all movements; Staff can view movements for their assigned branch
-create policy "Stock movements viewable by owner or assigned branch staff"
+-- Authenticated users can view stock movements
+create policy "Stock movements viewable by authenticated users"
   on public.stock_movements for select
   to authenticated
-  using (public.is_owner() or branch_id = public.get_user_branch_id());
+  using (true);
 
--- Owner can record all movements; Staff can record for their assigned branch
-create policy "Stock movements insertable by owner or assigned branch staff"
+-- Authenticated users can record movements
+create policy "Stock movements insertable by authenticated users"
   on public.stock_movements for insert
   to authenticated
-  with check (public.is_owner() or branch_id = public.get_user_branch_id());
+  with check (true);
 
--- Owner can update movements; Staff can update only for their assigned branch
-create policy "Stock movements updatable by owner or assigned branch staff"
+-- Authenticated users can update movements
+create policy "Stock movements updatable by authenticated users"
   on public.stock_movements for update
   to authenticated
-  using (public.is_owner() or branch_id = public.get_user_branch_id())
-  with check (public.is_owner() or branch_id = public.get_user_branch_id());
+  using (true)
+  with check (true);
 
 -- Only owners can delete stock movements
 create policy "Stock movements deletable by owner"
