@@ -36,14 +36,20 @@ export default function SearchPage() {
     const categoryMap = new Map(categories.map(c => [c.id, c.name]));
 
     // 2. Fetch branches for branch name display
-    const branches = await db.branches.toArray();
-    const currentBranch = branches.find(b => b.id === userBranchId);
-    const branchName = currentBranch?.name || profile?.branch || '';
+    let resolvedBranchId = profile?.branch_id;
+    let branchName = profile?.branch_name || '';
+    if (!resolvedBranchId) {
+      const firstBranch = await db.branches.toCollection().first();
+      if (firstBranch) {
+        resolvedBranchId = firstBranch.id;
+        branchName = firstBranch.name;
+      }
+    }
 
-    // 3. Fetch inventory records (filtered by branch if user has a branch)
+    // 3. Fetch inventory records (filtered by branch)
     let inventoryRecords = [];
-    if (userBranchId) {
-      inventoryRecords = await db.inventory.where('branch_id').equals(userBranchId).toArray();
+    if (resolvedBranchId) {
+      inventoryRecords = await db.inventory.where('branch_id').equals(resolvedBranchId).toArray();
     } else {
       inventoryRecords = await db.inventory.toArray();
     }

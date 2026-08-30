@@ -92,7 +92,13 @@ export default function StockOutPage() {
     setIsScannerOpen(false);
 
     try {
-      const product = await db.products.where('barcode').equals(cleanCode).first();
+      // Find the product by checking exact match, or variations with leading zero
+      const allProducts = await db.products.toArray();
+      const product = allProducts.find(p => 
+        p.barcode === cleanCode || 
+        p.barcode === `0${cleanCode}` || 
+        `0${p.barcode}` === cleanCode
+      );
 
       if (product) {
         const stockQty = await fetchCurrentStock(product.id);
