@@ -14,6 +14,7 @@ import ProductFormPage from './pages/ProductFormPage';
 import SearchPage from './pages/SearchPage';
 import ReportsPage from './pages/ReportsPage';
 import SettingsPage from './pages/SettingsPage';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 import BottomNav from './components/BottomNav';
 import SyncStatusBar from './components/SyncStatusBar';
@@ -94,86 +95,90 @@ export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
-        <Routes>
-          {/* Public Route */}
-          <Route
-            path="/login"
-            element={
-              <PublicRoute>
-                <LoginPage />
-              </PublicRoute>
-            }
-          />
+        <div className="pb-20 md:pb-0 relative min-h-screen">
+          <ErrorBoundary>
+            <Routes>
+              {/* Public Route */}
+              <Route
+                path="/login"
+                element={
+                  <PublicRoute>
+                    <LoginPage />
+                  </PublicRoute>
+                }
+              />
 
-          {/* Protected Routes */}
-          <Route
-            path="/"
-            element={
-              <ProtectedRoute>
-                <DashboardPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/stock-in"
-            element={
-              <ProtectedRoute>
-                <StockInPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/stock-out"
-            element={
-              <ProtectedRoute>
-                <StockOutPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/product/new"
-            element={
-              <ProtectedRoute>
-                <ProductFormPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/product/new/:barcode"
-            element={
-              <ProtectedRoute>
-                <ProductFormPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/search"
-            element={
-              <ProtectedRoute>
-                <SearchPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/reports"
-            element={
-              <ProtectedRoute>
-                <ReportsPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/settings"
-            element={
-              <ProtectedRoute>
-                <SettingsPage />
-              </ProtectedRoute>
-            }
-          />
+              {/* Protected Routes */}
+              <Route
+                path="/"
+                element={
+                  <ProtectedRoute>
+                    <DashboardPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/stock-in"
+                element={
+                  <ProtectedRoute>
+                    <StockInPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/stock-out"
+                element={
+                  <ProtectedRoute>
+                    <StockOutPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/product/new"
+                element={
+                  <ProtectedRoute>
+                    <ProductFormPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/product/new/:barcode"
+                element={
+                  <ProtectedRoute>
+                    <ProductFormPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/search"
+                element={
+                  <ProtectedRoute>
+                    <SearchPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/reports"
+                element={
+                  <ProtectedRoute>
+                    <ReportsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/settings"
+                element={
+                  <ProtectedRoute>
+                    <SettingsPage />
+                  </ProtectedRoute>
+                }
+              />
 
-          {/* Catch-all fallback route */}
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+              {/* Catch-all fallback route */}
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </ErrorBoundary>
+        </div>
 
         {/* Global Toast Notifications */}
         <Toaster
