@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { useAuthContext } from '../App';
@@ -16,6 +16,7 @@ import QuantityInput from '../components/QuantityInput';
 export default function StockInPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
 
   let auth = {};
   try {
@@ -117,6 +118,15 @@ export default function StockInPage() {
       setIsScannerOpen(true);
     }
   }, [fetchCurrentStock, t]);
+
+  // Handle auto-fill from navigation state
+  useEffect(() => {
+    if (location.state?.barcode && status === 'scanning') {
+      handleBarcodeLookup(location.state.barcode);
+      // clear the state so it doesn't loop if user goes back
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location.state, handleBarcodeLookup, status, navigate, location.pathname]);
 
   // Confirm and save stock in
   const handleAddStock = async () => {
